@@ -3,12 +3,15 @@
 import requests
 import simplejson
 from datetime import datetime
+from collections import namedtuple
 
 USER_AGENT = 'OnCampus CLI v0.0.0'
 
 FILTER_ASSIGNED = 0
 FILTER_ACTIVE = 2
 FILTER_DUE = 1
+
+SessionInfo = namedtuple('SessionInfo', ['domain', 'token', 'persona', 'classes'])
 
 class Assignment:
     STATUS_TODO = -1
@@ -20,8 +23,14 @@ class Assignment:
 
     DATETIME_FORMAT = '%m/%d/%Y %I:%M %p'
 
-    def __init__(self, data, domain):
+    def __init__(self, session, data):
         self.className = data['groupname']
+        self.classId = data['section_id']
+
+        for c in session.classes:
+            if c._id == self.classId:
+                self._class = c
+
         self._id = data['assignment_id']
         self.indexId = data['assignment_index_id']
         self.type = data['assignment_type']
@@ -31,11 +40,11 @@ class Assignment:
 
         self.dateAssigned = datetime.strptime(data['date_assigned'], Assignment.DATETIME_FORMAT)
         self.dateDue = datetime.strptime(data['date_due'], Assignment.DATETIME_FORMAT)
-        self.domain = domain
-        self.url = f'https://{domain}/app/student#assignmentdetail/{self._id}/{self.indexId}/0/studentmyday--assignment-center'
+        self.domain = session.domain
+        self.url = f'https://{session.domain}/app/student#assignmentdetail/{self._id}/{self.indexId}/0/studentmyday--assignment-center'
 
-    def changeStatus(self, newStatus, token):
-        url = f'https://{self.domain}/api/assignment2/assignmentstatusupdate/?format=json&t={token}'
+    def changeStatus(self, session, newStatus):
+        url = f'https://{self.domain}/api/assignment2/assignmentstatusupdate/?format=json&t={session.token}'
         json = {
             'assignmentIndexId': self.indexId,
             'assignmentStatus': newStatus
@@ -52,6 +61,18 @@ class Assignment:
 
         self.status = newStatus
         return True
+
+class ClassInfo:
+    def __init__(self, data, domain):
+        self.domain = domain
+
+        self._id = data['CurrentSectionId']
+        self.name = data['GroupName']
+        self.instructor = data['OwnerName']
+        self.category = data['Category']
+        self.block = data['SectionBlock']
+
+        self.url = f'https://{domain}/app/student#academicclass/{self._id}/0/bulletinboard'
 
 def getToken(domain, username, password):
     url = f'https://{domain}/api/SignIn'
@@ -76,12 +97,22 @@ def getToken(domain, username, password):
 def formatDate(d):
     return d.strftime('%m/%d/%Y')
 
-def parseAssignmentData(data, domain):
-    return [Assignment(i, domain) for i in data]
+def parseAssignmentData(session, data):
+    return [Assignment(session, i) for i in data]
 
-def getAssignments(filter, startDate, endDate, domain, token):
-    url = f'https://{domain}/api/DataDirect/AssignmentCenterAssignments'
-    url += f'?format=json&persona=2&filter={filter}&dateStart={formatDate(startDate)}&dateEnd={formatDate(endDate)}&t={token}'
+def getAssignments(s, **kwargs):
+    url = f'https://{s.domain}/api/DataDirect/AssignmentCenterAssignments?format=json&persona={s.persona}&t={s.token}'
+    if 'startDate' in kwargs:
+        url += f'&dateStart={formatDate(kwargs["startDate"])}'
+    if 'endDate' in kwargs:
+        url += f'&dateEnd={formatDate(kwargs["endDate"])}'
+    if 'filterMode' in kwargs:
+        url += f'&filter={kwargs["filterMode"]}'
+    if 'status' in kwargs:
+        url += f'&statusList={",".join([str(s) for s in kwargs["status"]])}'
+    if 'classes' in kwargs:
+        url += f'&sectionList={",".join([c.sectionId for c in kwargs["classes"]])}'
+
 
     r = requests.get(url, headers = {'User-Agent': USER_AGENT})
 
@@ -93,8 +124,24 @@ def getAssignments(filter, startDate, endDate, domain, token):
             else:
                 raise Exception(json['Error'])
 
-        return parseAssignmentData(json, domain)
+        return parseAssignmentData(s, json)
     except simplejson.errors.JSONDecodeError:
         raise ValueError('Got non-JSON response from API')
 
+def getSession(domain, username, password):
+    token = getToken(domain, username, password)
+    url = f'https://{domain}/api/webapp/context?t={token}'
+    r = requests.get(url, headers = {'User-Agent': USER_AGENT})
 
+    json = r.json()
+
+    if 'Personas' not in json or 'Groups' not in json:
+        raise Exception('Failed to get needed info from API')
+
+    for p in json['Personas']:
+        if 'DefaultPersona' in p and p['DefaultPersona']:
+            defaultPersona = p['Id']
+
+    classes = [ClassInfo(g, domain) for g in json['Groups'] if 'CurrentEnrollment' in g and g['CurrentEnrollment']]
+
+    return SessionInfo(domain, token, defaultPersona, classes)
