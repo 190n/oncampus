@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 
-import requests
-import simplejson
 from datetime import datetime
 from collections import namedtuple
+
+import requests
+import simplejson
 
 USER_AGENT = 'OnCampus CLI v0.0.0'
 

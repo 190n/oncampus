@@ -1,7 +1,10 @@
 #!/usr/bin/python3
 
-import oncampus
 import html
+import shutil
+import textwrap
+
+import oncampus
 
 PRESERVE_BOLD_ITALIC=True
 
@@ -16,10 +19,11 @@ statusMap = {
     oncampus.Assignment.STATUS_PAUSED: 'Paused'
 }
 
+# name, lamb, wrap, minLen
 assignmentColumns = {
-    'className': ('Class', lambda a: getClassDisplayName(a.className)),
-    'title': ('Assignment', lambda a: sanitizeString(a.title, True)),
-    'status': ('Status', lambda a: statusMap[a.status])
+    'className': ('Class', lambda a: getClassDisplayName(a.className), False, None),
+    'title': ('Assignment', lambda a: sanitizeString(a.title, True), True, 20),
+    'status': ('Status', lambda a: statusMap[a.status], False, None)
 }
 
 statusMaxLength = max(6, max(map(len, statusMap.values())))
@@ -43,17 +47,36 @@ def getClassDisplayName(className):
     else:
         return className
 
-# TODO: doesn't handle multi-line data!!!
+# TODO: behaves badly when ANSI codes are involvedá
 def displayTable(data, columns):
     lens = []
-    for name, lamb in columns:
-        maxLen = max(len(name), max(map(lambda d: len(lamb(d)), data)))
-        lens.append(maxLen)
+    for name, lamb, wrap, minLen in columns:
+        if wrap:
+            lens.append(-minLen)
+        else:
+            maxLen = max(len(name), max(map(lambda d: len(lamb(d)), data)))
+            lens.append(maxLen)
+
+    definiteLens = [l for l in lens if l >= 0]
+    widthRemaining = shutil.get_terminal_size().columns\
+            - sum(definiteLens)\
+            - (3 * len(lens) + 1)\
+            - sum([-l for l in lens if l < 0])
+
+    if widthRemaining < 0:
+        # use minimum length for wrapping columns
+        lens = map(abs, lens)
+    else:
+        # evenly distribute remaining space
+        amountToAdd = widthRemaining // (len(lens) - len(definiteLens))
+        lens = map(lambda l: -l + amountToAdd if l < 0 else l, lens)
+
+    lens = list(lens)
 
     # header
     print(f'+{"-" * (sum(lens) + 3 * len(columns) - 1)}+')
     print('|', end='')
-    for i, (name, _) in enumerate(columns):
+    for i, (name, *_) in enumerate(columns):
         print(f' {name.ljust(lens[i])} |', end='')
     print('\n|', end='')
     for l in lens[:-1]:
@@ -62,10 +85,23 @@ def displayTable(data, columns):
 
     # data
     for d in data:
-        print('|', end='')
-        for i, (_, lamb) in enumerate(columns):
-            print(f' {lamb(d).ljust(lens[i])} |', end='')
-        print('\n', end='')
+        wrappedLines = {}
+        for i, (_, lamb, *_) in [(i, c) for i, c in enumerate(columns) if c[2]]:
+            wrappedLines[i] = textwrap.wrap(lamb(d), lens[i])
+
+        for i in range(max(map(len, wrappedLines.values()))):
+            print('|', end='')
+
+            for j, (_, lamb, *_) in enumerate(columns):
+                if j in wrappedLines:
+                    val = wrappedLines[j][i] if i < len(wrappedLines[j]) else ''
+                elif i == 0:
+                    val = lamb(d)
+                else:
+                    val = ''
+                print(f' {val.ljust(lens[j])} |', end='')
+
+            print('\n', end='')
 
     # footer
     print(f'+{"-" * (sum(lens) + 3 * len(columns) - 1)}+')
