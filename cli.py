@@ -47,7 +47,7 @@ def getClassDisplayName(className):
     else:
         return className
 
-# TODO: behaves badly when ANSI codes are involvedá
+# TODO: behaves badly when ANSI codes are involved
 def displayTable(data, columns):
     lens = []
     for name, lamb, wrap, minLen in columns:

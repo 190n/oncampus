@@ -44,6 +44,8 @@ class Assignment:
         self.domain = session.domain
         self.url = f'https://{session.domain}/app/student#assignmentdetail/{self._id}/{self.indexId}/0/studentmyday--assignment-center'
 
+        self.data = data
+
     def changeStatus(self, session, newStatus):
         url = f'https://{self.domain}/api/assignment2/assignmentstatusupdate/?format=json&t={session.token}'
         json = {
